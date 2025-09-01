@@ -1539,22 +1539,20 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             $html .= '<th class="col-name" data-sort-key="PRODUCT_NAME">Название</th>';
             $html .= '<th class="col-quantity" data-sort-key="TOTAL_QUANTITY">Требуется</th>';
             if ($showYuzhnyPort) {
-                $html .= '<th class="col-property">Своб. ЮП</th>';
+                $html .= '<th class="col-property col-svob-yup">Своб. ЮП</th>';
             }
             if ($showRamenskiy) {
-                $html .= '<th class="col-property">Своб. Рам.</th>';
+                $html .= '<th class="col-property col-svob-ram">Своб. Рам.</th>';
             }
             if ($isShipmentView) {
                 $html .= '<th class="col-property" data-sort-key="ASSEMBLY_QTY">Сборка</th>';
                 $html .= '<th class="col-property" data-sort-key="DELIVERY_QTY">Доставка</th>';
                 $html .= '<th class="col-property" data-sort-key="PICKUP_QTY">Самовывоз</th>';
             }
-            // --- НАЧАЛО ИЗМЕНЕНИЙ ---
             if ($showShipmentStockCols) {
-                $html .= '<th class="col-property">Южный порт</th>';
-                $html .= '<th class="col-property">Раменский</th>';
+                $html .= '<th class="col-property col-yuzhny">Южный порт</th>';
+                $html .= '<th class="col-property col-ramenskiy">Раменский</th>';
             }
-            // --- КОНЕЦ ИЗМЕНЕНИЙ ---
         } else {
             $html .= '<th class="col-name" data-sort-key="ID">ID</th>';
             $html .= '<th class="col-assigned" data-sort-key="ASSIGNED_BY_NAME">Ответственный</th>';
@@ -1640,13 +1638,13 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                     $freeStockYuzhny = $item['FREE_STOCK_YUZHNY'] ?? 0;
                     //$freeStockYuzhny = $freeStockYuzhny > 0 ? $freeStockYuzhny : 0;
                     $yuzhnyPortValue = (float)($item['PROPERTY_135_VALUE'] ?? 0);
-                    $html .= "<td class='col-property ".($freeStockYuzhny < 0 ? 'is-due-today' : '')."'><strong>" . $freeStockYuzhny . "</strong> шт. <span style='color: #828B95;'>(" . $yuzhnyPortValue . ")</span></td>";
+                    $html .= "<td class='col-property col-svob-yup ".($freeStockYuzhny < 0 ? 'is-due-today' : '')."'><strong>" . $freeStockYuzhny . "</strong> шт. <span style='color: #828B95;'>(" . $yuzhnyPortValue . ")</span></td>";
                 }
                 if ($showRamenskiy) {
                     $freeStockRamenskiy = $item['FREE_STOCK_RAMENSKIY'] ?? 0;
                     //$freeStockRamenskiy = $freeStockRamenskiy > 0 ? $freeStockRamenskiy : 0;
                     $ramenskiyValue = (float)($item['PROPERTY_145_VALUE'] ?? 0);
-                    $html .= "<td class='col-property ".($freeStockRamenskiy < 0 ? 'is-due-today' : '')."'><strong>" . $freeStockRamenskiy . "</strong> шт. <span style='color: #828B95;'>(" . $ramenskiyValue . ")</span></td>";
+                    $html .= "<td class='col-property col-svob-ram ".($freeStockRamenskiy < 0 ? 'is-due-today' : '')."'><strong>" . $freeStockRamenskiy . "</strong> шт. <span style='color: #828B95;'>(" . $ramenskiyValue . ")</span></td>";
                 }
                 if ($isShipmentView) {
                     $html .= "<td class='col-property'><strong>" . ($item['ASSEMBLY_QTY'] ?? '0') . "</strong> шт.</td>";
@@ -1655,8 +1653,8 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 }
                 // --- НАЧАЛО ИЗМЕНЕНИЙ ---
                 if ($showShipmentStockCols) {
-                    $html .= "<td class='col-property'><strong>" . ($item['READY_QTY_YUZHNY'] ?? '0') . "</strong> шт.</td>";
-                    $html .= "<td class='col-property'><strong>" . ($item['READY_QTY_RAMENSKIY'] ?? '0') . "</strong> шт.</td>";
+                    $html .= "<td class='col-property col-yuzhny'><strong>" . ($item['READY_QTY_YUZHNY'] ?? '0') . "</strong> шт.</td>";
+                    $html .= "<td class='col-property col-ramenskiy'><strong>" . ($item['READY_QTY_RAMENSKIY'] ?? '0') . "</strong> шт.</td>";
                 }
                 // --- КОНЕЦ ИЗМЕНЕНИЙ ---
             } else {

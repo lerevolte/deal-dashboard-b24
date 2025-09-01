@@ -499,7 +499,16 @@ td.col-quantity {
     vertical-align: middle;
 }
 
-/* Стиль для ячейки статуса сборки, если день совпадает с текущим */
 td.is-due-today {
     background-color: #fff0f0 !important;
+}
+
+.hide-ramenskiy .col-svob-ram,
+.hide-ramenskiy .col-ramenskiy {
+    display: none;
+}
+
+.hide-yuzhny .col-svob-yup,
+.hide-yuzhny .col-yuzhny {
+    display: none;
 }

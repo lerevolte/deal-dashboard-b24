@@ -96,9 +96,48 @@ BX.ready(function() {
         if(container) container.querySelectorAll('.active').forEach(item => item.classList.remove('active'));
     }
 
+    function toggleWarehouseColumns(warehouseId) {
+        if (!productListContainer || !detailsContainer) return;
+
+        let yuzhnyPortId = null;
+        let ramenskiyId = null;
+
+        if (warehouseFilterSelect) {
+            for (let option of warehouseFilterSelect.options) {
+                if (option.text.includes('Южнопортовый')) {
+                    yuzhnyPortId = option.value;
+                }
+                if (option.text.includes('Раменский')) {
+                    ramenskiyId = option.value;
+                }
+            }
+        }
+
+        // Reset classes first
+        productListContainer.classList.remove('hide-yuzhny', 'hide-ramenskiy');
+        detailsContainer.classList.remove('hide-yuzhny', 'hide-ramenskiy');
+
+        if (warehouseId === yuzhnyPortId) {
+            productListContainer.classList.add('hide-ramenskiy');
+            detailsContainer.classList.add('hide-ramenskiy');
+        } else if (warehouseId === ramenskiyId) {
+            productListContainer.classList.add('hide-yuzhny');
+            detailsContainer.classList.add('hide-yuzhny');
+        }
+    }
+
     function showMoveMenu(anchorElement) {
         if (!activeDealItem) { alert('Пожалуйста, выберите заказ из списка.'); return; }
-        const targetStagesIds = ['FINAL_INVOICE', '20', '31', '21', '28', '25'];
+
+        const currentStageId = activeStageItem ? activeStageItem.dataset.stageId : null;
+        let targetStagesIds;
+
+        if (currentStageId === '17' || currentStageId === '13_26') {
+            targetStagesIds = ['29'];
+        } else {
+            targetStagesIds = ['FINAL_INVOICE', '20', '31', '21', '28', '25'];
+        }
+
         const stageInfo = window.DEAL_DASHBOARD_STAGE_INFO || {};
         const menuItems = [];
         targetStagesIds.forEach(function(targetStageId) {
@@ -139,7 +178,7 @@ BX.ready(function() {
     }
 
     function renderDealActions(stageId) {
-        const movableStages = ['20', '31', '28', '21_27', '25'];
+        const movableStages = ['20', '31', '28', '21_27', '25', '17', '13_26'];
         let actionsHtml = '';
         if (movableStages.includes(stageId)) {
             actionsHtml = `<button class="ui-btn ui-btn-sm ui-btn-light-border dashboard-actions-button" data-action="show-move-menu" title="Переместить сделку"><span class="dashboard-actions-icon"></span></button>`;
@@ -205,6 +244,8 @@ BX.ready(function() {
             applySortIndicator('product-list-container', productsSort.sortBy, productsSort.sortOrder);
             
             if (downloadCsvBtn) downloadCsvBtn.style.display = 'inline-block';
+
+            toggleWarehouseColumns(currentFilter.warehouseId);
 
             // Выделяем "Все товары" по умолчанию
             const allProductsRow = productListContainer.querySelector('tr[data-product-id="all"]');
@@ -498,7 +539,10 @@ BX.ready(function() {
                         mode: 'class', 
                         data: requestData
                     })
-                    .then(response => { if (detailsContainer) detailsContainer.innerHTML = response.data.html; });
+                    .then(response => { 
+                        if (detailsContainer) detailsContainer.innerHTML = response.data.html; 
+                        toggleWarehouseColumns(currentFilter.warehouseId);
+                    });
                 }
             }
             return;
@@ -692,3 +736,4 @@ BX.ready(function() {
         });
     }
 });
+
