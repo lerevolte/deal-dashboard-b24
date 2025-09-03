@@ -1849,4 +1849,201 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         $this->arResult['HEIGHTS'] = CUserOptions::GetOption('company.deal.dashboard', 'window_heights', ['deals' => 200, 'products' => 200, 'details' => 250]);
         $this->includeComponentTemplate();
     }
+
+    /**
+     * Agent function to automatically move deals from stage 20 to 25.
+     * To use it, create a new agent in the admin panel with the function name:
+     * CompanyDealDashboardComponent::autoMoveDealsAgent();
+     * @return string The name of the agent function for Bitrix.
+     */
+    public static function autoMoveDealsAgent()
+    {
+        // Uncomment the code below when testing is complete and you want to activate the agent.
+        /*
+        $component = new CompanyDealDashboardComponent();
+        $dealsToMove = $component->getDealsToMoveFromStage20();
+
+        if (!empty($dealsToMove)) {
+            $dealUpdater = new \CCrmDeal(false);
+            foreach ($dealsToMove as $deal) {
+                $dealUpdater->Update($deal['ID'], ['STAGE_ID' => '25']);
+                // Optional: add logging here to track moved deals
+                // error_log("Moved deal ID " . $deal['ID'] . " to stage 25.", 3, "/path/to/your/log.log");
+            }
+        }
+        */
+
+        // Return the function name for the next agent execution
+        return '\CompanyDealDashboardComponent::autoMoveDealsAgent();';
+    }
+
+    /**
+     * Test function to get a list of deals that should be moved.
+     * This function checks stock availability for deals in stage 20.
+     * @return array A list of deals to be moved.
+     */
+    public function getDealsToMoveFromStage20()
+    {
+        // 1. Check module dependencies
+        if (!\Bitrix\Main\Loader::includeModule('crm') || !\Bitrix\Main\Loader::includeModule('iblock') || !\Bitrix\Main\Loader::includeModule('catalog')) {
+            error_log("autoMoveDealsAgent: Required modules (crm, iblock, catalog) are not installed.");
+            return [];
+        }
+
+        // 2. Prepare warehouse information
+        $this->getFilterWarehouseFieldInfo();
+        $yuzhnyPortId = null;
+        $ramenskiyId = null;
+        if ($this->filterWarehouses) {
+            foreach ($this->filterWarehouses as $warehouse) {
+                if (mb_strpos($warehouse['VALUE'], 'Южнопортовый') !== false) {
+                    $yuzhnyPortId = $warehouse['ID'];
+                }
+                if (mb_strpos($warehouse['VALUE'], 'Раменский') !== false) {
+                    $ramenskiyId = $warehouse['ID'];
+                }
+            }
+        }
+
+        // 3. Get all deals from stage 'Assembly' (ID 20)
+        $dbDeals = \CCrmDeal::GetListEx(
+            [],
+            ['STAGE_ID' => '20', 'CHECK_PERMISSIONS' => 'N'],
+            false,
+            false,
+            ['ID', 'TITLE', 'UF_CRM_1753786869']
+        );
+
+        $deals = [];
+        while ($deal = $dbDeals->Fetch()) {
+            $deals[] = $deal;
+        }
+
+        if (empty($deals)) {
+            return [];
+        }
+
+        // 4. Collect all products from all deals to optimize queries
+        $dealProductsMap = [];
+        $allProductIds = [];
+
+        $dealIds = array_column($deals, 'ID');
+        $productRows = \Bitrix\Crm\ProductRowTable::getList([
+            'filter' => ['=OWNER_TYPE' => 'D', '@OWNER_ID' => $dealIds]
+        ])->fetchAll();
+
+        foreach ($productRows as $row) {
+            $dealProductsMap[$row['OWNER_ID']][] = $row;
+        }
+
+        // 5. Break down product sets into components
+        $flatProductsByDeal = [];
+        foreach ($dealIds as $dealId) {
+            $flatProductsByDeal[$dealId] = [];
+            if (!empty($dealProductsMap[$dealId])) {
+                $flatProductsByDeal[$dealId] = $this->getFlatProductsList($dealProductsMap[$dealId]);
+                foreach ($flatProductsByDeal[$dealId] as $product) {
+                    $allProductIds[] = $product['PRODUCT_ID'];
+                }
+            }
+        }
+        
+        $uniqueProductIds = array_unique($allProductIds);
+        if(empty($uniqueProductIds)) {
+             $uniqueProductIds = [-1]; // Prevent SQL error with empty "IN ()" clause
+        }
+
+        // 6. Get stock and reservation info for all products in a single query
+        $productProperties = $this->getProductsProperties($uniqueProductIds);
+        $readyForShipmentQuantities = $this->getProductReadyForShipmentQuantities($uniqueProductIds);
+
+        // 7. Main checking logic
+        $dealsToMove = [];
+        foreach ($deals as $deal) {
+            $dealId = $deal['ID'];
+            $warehouseId = $deal['UF_CRM_1753786869'];
+
+            // Skip deals with no warehouse or an unsupported warehouse
+            if (!$warehouseId || !in_array($warehouseId, [$yuzhnyPortId, $ramenskiyId])) {
+                continue;
+            }
+
+            $productsToCheck = $flatProductsByDeal[$dealId] ?? [];
+            
+            // Deals without products can be moved
+            if (empty($productsToCheck)) {
+                $dealsToMove[] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
+                continue;
+            }
+
+            $isStockSufficient = true;
+            foreach ($productsToCheck as $productInfo) {
+                $productId = $productInfo['PRODUCT_ID'];
+                $quantityNeeded = $productInfo['QUANTITY'];
+                
+                $stockPropertyKey = ($warehouseId == $yuzhnyPortId) ? 'PROPERTY_135_VALUE' : 'PROPERTY_145_VALUE';
+                
+                $totalStock = (float)($productProperties[$productId][$stockPropertyKey] ?? 0);
+                $reservedStock = (float)($readyForShipmentQuantities[$productId]['by_warehouse'][$warehouseId] ?? 0);
+                $freeStock = $totalStock - $reservedStock;
+                
+                if ($freeStock < $quantityNeeded) {
+                    $isStockSufficient = false;
+                    break; // Not enough stock for one of the products, stop checking this deal
+                }
+            }
+
+            if ($isStockSufficient) {
+                $dealsToMove[] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
+            }
+        }
+
+        return $dealsToMove;
+    }
+
+
+    /**
+     * Helper function to get a "flat" list of products from a deal,
+     * breaking down sets into their components.
+     * @param array $productRows Products from ProductRowTable.
+     * @return array A flat list of products like [['PRODUCT_ID' => X, 'QUANTITY' => Y], ...].
+     */
+    private function getFlatProductsList(array $productRows)
+    {
+        $flatList = [];
+        $productQuantities = [];
+
+        foreach ($productRows as $row) {
+            $productId = $row['PRODUCT_ID'];
+            $quantity = (float)$row['QUANTITY'];
+
+            $sets = \CCatalogProductSet::getAllSetsByProduct($productId, \CCatalogProductSet::TYPE_SET);
+
+            if ($sets) { // This is a product set
+                foreach ($sets as $set) {
+                    foreach ($set['ITEMS'] as $item) {
+                        $componentId = $item['ITEM_ID'];
+                        $componentQuantity = (float)$item['QUANTITY'];
+                        $totalComponentQuantity = $componentQuantity * $quantity;
+
+                        if (!isset($productQuantities[$componentId])) {
+                            $productQuantities[$componentId] = 0;
+                        }
+                        $productQuantities[$componentId] += $totalComponentQuantity;
+                    }
+                }
+            } else { // This is a simple product
+                if (!isset($productQuantities[$productId])) {
+                    $productQuantities[$productId] = 0;
+                }
+                $productQuantities[$productId] += $quantity;
+            }
+        }
+
+        foreach ($productQuantities as $id => $qty) {
+            $flatList[] = ['PRODUCT_ID' => $id, 'QUANTITY' => $qty];
+        }
+        
+        return $flatList;
+    }
 }
