@@ -18,6 +18,7 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
     private $assemblyStatuses = null;
     private $shippingWarehouses = null;
     private $filterWarehouses = null;
+    private $excludedProductIds = [23089, 111, 113];
 
     public function configureActions()
     {
@@ -169,7 +170,8 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             'select' => ['PRODUCT_ID'],
             'filter' => [
                 '%PRODUCT_NAME' => $searchQuery,
-                '=OWNER_TYPE' => 'D'
+                '=OWNER_TYPE' => 'D',
+                '!@PRODUCT_ID' => $this->excludedProductIds
             ]
         ])->fetchAll();
         if (!empty($productRowsByName)) {
@@ -257,6 +259,10 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             'select' => ['PRODUCT_ID', 'PRODUCT_NAME', 'QUANTITY'], 
             'filter' => ['=OWNER_TYPE' => 'D', '@OWNER_ID' => $dealIds]
         ])->fetchAll();
+
+        $productRows = array_filter($productRows, function($row) {
+            return !in_array($row['PRODUCT_ID'], $this->excludedProductIds);
+        });
         
         if (empty($productRows)) {
             return [];
@@ -1071,6 +1077,10 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 'filter' => ['=OWNER_TYPE' => 'D', '@OWNER_ID' => $dealIds]
             ])->fetchAll();
 
+            $productRows = array_filter($productRows, function($row) {
+                return !in_array($row['PRODUCT_ID'], $this->excludedProductIds);
+            });
+
             // --- FIX START V5: Final logic for correct quantity calculation ---
             // 1. Get all products/sets that are aggregated from the current stage's deals
             $productIdsInStage = array_unique(array_column($productRows, 'PRODUCT_ID'));
@@ -1240,6 +1250,10 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             'select' => ['PRODUCT_ID', 'PRODUCT_NAME', 'PRICE', 'QUANTITY'],
             'filter' => ['=OWNER_TYPE' => 'D', '=OWNER_ID' => $dealId],
         ])->fetchAll();
+
+        $productRowsUnfiltered = array_filter($productRowsUnfiltered, function($row) {
+            return !in_array($row['PRODUCT_ID'], $this->excludedProductIds);
+        });
         
         if (empty($productRowsUnfiltered)) {
             return ['html' => $this->renderItems([], 'deal_product', $stageId)];
@@ -1856,25 +1870,28 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
      * CompanyDealDashboardComponent::autoMoveDealsAgent();
      * @return string The name of the agent function for Bitrix.
      */
-    public static function autoMoveDealsAgent()
+    public function moveDealsToStage25()
     {
-        // Uncomment the code below when testing is complete and you want to activate the agent.
-        /*
-        $component = new CompanyDealDashboardComponent();
-        $dealsToMove = $component->getDealsToMoveFromStage20();
+        require_once($_SERVER['DOCUMENT_ROOT'] . '/local/php_interface/crest/crest.php');
+        $dealsToMove = $this->getDealsToMoveFromStage20();
 
         if (!empty($dealsToMove)) {
-            $dealUpdater = new \CCrmDeal(false);
+            //$dealUpdater = new \CCrmDeal(false);
             foreach ($dealsToMove as $deal) {
-                $dealUpdater->Update($deal['ID'], ['STAGE_ID' => '25']);
-                // Optional: add logging here to track moved deals
-                // error_log("Moved deal ID " . $deal['ID'] . " to stage 25.", 3, "/path/to/your/log.log");
+                $result = CRest::call(
+                    'crm.deal.update',
+                    [
+                        'id' => $deal['ID'],
+                        'fields' => [
+                           'STAGE_ID' => '25'
+                        ]
+                    ]
+                );
+                // $fields = ['STAGE_ID' => '25'];
+                // $dealUpdater->Update($deal['ID'], );
             }
         }
-        */
 
-        // Return the function name for the next agent execution
-        return '\CompanyDealDashboardComponent::autoMoveDealsAgent();';
     }
 
     /**
@@ -1949,13 +1966,28 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         }
         
         $uniqueProductIds = array_unique($allProductIds);
-        if(empty($uniqueProductIds)) {
-             $uniqueProductIds = [-1]; // Prevent SQL error with empty "IN ()" clause
-        }
 
-        // 6. Get stock and reservation info for all products in a single query
-        $productProperties = $this->getProductsProperties($uniqueProductIds);
-        $readyForShipmentQuantities = $this->getProductReadyForShipmentQuantities($uniqueProductIds);
+        // Get set info for all components found
+        $setInfoForAllProducts = $this->getProductsSetInfo($uniqueProductIds);
+        
+        // Collect all parent set IDs to fetch their properties and reservations as well
+        $allParentSetIds = [];
+        foreach ($setInfoForAllProducts as $info) {
+            if (!empty($info['SET_ID'])) {
+                $allParentSetIds[] = $info['SET_ID'];
+            }
+        }
+        $allParentSetIds = array_unique($allParentSetIds);
+
+        // All IDs we need to query for properties and stock
+        $idsForQueries = array_unique(array_merge($uniqueProductIds, $allParentSetIds));
+        if(empty($idsForQueries)) {
+             $idsForQueries = [-1]; // Prevent SQL error with empty "IN ()" clause
+        }
+        
+        // 6. Get stock and reservation info for all relevant products AND sets in single queries
+        $productProperties = $this->getProductsProperties($idsForQueries);
+        $readyForShipmentQuantities = $this->getProductReadyForShipmentQuantities($idsForQueries);
 
         // 7. Main checking logic
         $dealsToMove = [];
@@ -1981,10 +2013,15 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 $productId = $productInfo['PRODUCT_ID'];
                 $quantityNeeded = $productInfo['QUANTITY'];
                 
+                // Determine which product ID to use for stock and reservation checks.
+                // If it's a component, use its parent set ID. Otherwise, use its own ID.
+                $setInfo = $setInfoForAllProducts[$productId] ?? null;
+                $idToCheck = ($setInfo && !empty($setInfo['SET_ID'])) ? $setInfo['SET_ID'] : $productId;
+                
                 $stockPropertyKey = ($warehouseId == $yuzhnyPortId) ? 'PROPERTY_135_VALUE' : 'PROPERTY_145_VALUE';
                 
-                $totalStock = (float)($productProperties[$productId][$stockPropertyKey] ?? 0);
-                $reservedStock = (float)($readyForShipmentQuantities[$productId]['by_warehouse'][$warehouseId] ?? 0);
+                $totalStock = (float)($productProperties[$idToCheck][$stockPropertyKey] ?? 0);
+                $reservedStock = (float)($readyForShipmentQuantities[$idToCheck]['by_warehouse'][$warehouseId] ?? 0);
                 $freeStock = $totalStock - $reservedStock;
                 
                 if ($freeStock < $quantityNeeded) {
@@ -2017,12 +2054,23 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             $productId = $row['PRODUCT_ID'];
             $quantity = (float)$row['QUANTITY'];
 
+            // Исключаем услуги из расчетов
+            if (in_array($productId, $this->excludedProductIds)) {
+                continue;
+            }
+
             $sets = \CCatalogProductSet::getAllSetsByProduct($productId, \CCatalogProductSet::TYPE_SET);
 
             if ($sets) { // This is a product set
                 foreach ($sets as $set) {
                     foreach ($set['ITEMS'] as $item) {
                         $componentId = $item['ITEM_ID'];
+                        
+                        // Исключаем услуги из комплектов
+                        if (in_array($componentId, $this->excludedProductIds)) {
+                            continue;
+                        }
+
                         $componentQuantity = (float)$item['QUANTITY'];
                         $totalComponentQuantity = $componentQuantity * $quantity;
 
