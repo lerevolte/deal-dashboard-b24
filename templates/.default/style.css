@@ -368,7 +368,9 @@ td.col-quantity {
 .dashboard-list-item.is-overdue:hover {
     background-color: #ffe0e0 !important;
 }
-
+.dashboard-list-item.active {
+    background-color: #fff8d5!important;
+}
 .dashboard-actions-button {
     width: 28px;
     height: 28px;

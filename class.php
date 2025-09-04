@@ -1894,12 +1894,181 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
 
     }
 
-    /**
-     * Test function to get a list of deals that should be moved.
-     * This function checks stock availability for deals in stage 20.
-     * @return array A list of deals to be moved.
-     */
-    public function getDealsToMoveFromStage20()
+    public function moveDealsFromStage20()
+    {
+        require_once($_SERVER['DOCUMENT_ROOT'] . '/local/php_interface/crest/crest.php');
+        $dealsToMove = $this->getDealsForAutoMove();
+
+        if (!empty($dealsToMove['to_stage_25'])) {
+            foreach ($dealsToMove['to_stage_25'] as $deal) {
+                $result = CRest::call(
+                    'crm.deal.update',
+                    [
+                        'id' => $deal['ID'],
+                        'fields' => [
+                           'STAGE_ID' => '25'
+                        ]
+                    ]
+                );
+            }
+        }
+        if (!empty($dealsToMove['to_stage_28'])) {
+            foreach ($dealsToMove['to_stage_28'] as $deal) {
+                //echo $deal['ID']."<br>";
+                $result = CRest::call(
+                    'crm.deal.update',
+                    [
+                        'id' => $deal['ID'],
+                        'fields' => [
+                           'STAGE_ID' => '28'
+                        ]
+                    ]
+                );
+            }
+        }
+    }
+
+
+    // public function getDealsToMoveFromStage20()
+    // {
+    //     // 1. Check module dependencies
+    //     if (!\Bitrix\Main\Loader::includeModule('crm') || !\Bitrix\Main\Loader::includeModule('iblock') || !\Bitrix\Main\Loader::includeModule('catalog')) {
+    //         error_log("autoMoveDealsAgent: Required modules (crm, iblock, catalog) are not installed.");
+    //         return [];
+    //     }
+
+    //     // 2. Prepare warehouse information
+    //     $this->getFilterWarehouseFieldInfo();
+    //     $yuzhnyPortId = null;
+    //     $ramenskiyId = null;
+    //     if ($this->filterWarehouses) {
+    //         foreach ($this->filterWarehouses as $warehouse) {
+    //             if (mb_strpos($warehouse['VALUE'], 'Южнопортовый') !== false) {
+    //                 $yuzhnyPortId = $warehouse['ID'];
+    //             }
+    //             if (mb_strpos($warehouse['VALUE'], 'Раменский') !== false) {
+    //                 $ramenskiyId = $warehouse['ID'];
+    //             }
+    //         }
+    //     }
+
+    //     // 3. Get all deals from stage 'Assembly' (ID 20)
+    //     $dbDeals = \CCrmDeal::GetListEx(
+    //         [],
+    //         ['STAGE_ID' => '20', 'CHECK_PERMISSIONS' => 'N'],
+    //         false,
+    //         false,
+    //         ['ID', 'TITLE', 'UF_CRM_1753786869']
+    //     );
+
+    //     $deals = [];
+    //     while ($deal = $dbDeals->Fetch()) {
+    //         $deals[] = $deal;
+    //     }
+
+    //     if (empty($deals)) {
+    //         return [];
+    //     }
+
+    //     // 4. Collect all products from all deals to optimize queries
+    //     $dealProductsMap = [];
+    //     $allProductIds = [];
+
+    //     $dealIds = array_column($deals, 'ID');
+    //     $productRows = \Bitrix\Crm\ProductRowTable::getList([
+    //         'filter' => ['=OWNER_TYPE' => 'D', '@OWNER_ID' => $dealIds]
+    //     ])->fetchAll();
+
+    //     foreach ($productRows as $row) {
+    //         $dealProductsMap[$row['OWNER_ID']][] = $row;
+    //     }
+
+    //     // 5. Break down product sets into components
+    //     $flatProductsByDeal = [];
+    //     foreach ($dealIds as $dealId) {
+    //         $flatProductsByDeal[$dealId] = [];
+    //         if (!empty($dealProductsMap[$dealId])) {
+    //             $flatProductsByDeal[$dealId] = $this->getFlatProductsList($dealProductsMap[$dealId]);
+    //             foreach ($flatProductsByDeal[$dealId] as $product) {
+    //                 $allProductIds[] = $product['PRODUCT_ID'];
+    //             }
+    //         }
+    //     }
+        
+    //     $uniqueProductIds = array_unique($allProductIds);
+
+    //     // Get set info for all components found
+    //     $setInfoForAllProducts = $this->getProductsSetInfo($uniqueProductIds);
+        
+    //     // Collect all parent set IDs to fetch their properties and reservations as well
+    //     $allParentSetIds = [];
+    //     foreach ($setInfoForAllProducts as $info) {
+    //         if (!empty($info['SET_ID'])) {
+    //             $allParentSetIds[] = $info['SET_ID'];
+    //         }
+    //     }
+    //     $allParentSetIds = array_unique($allParentSetIds);
+
+    //     // All IDs we need to query for properties and stock
+    //     $idsForQueries = array_unique(array_merge($uniqueProductIds, $allParentSetIds));
+    //     if(empty($idsForQueries)) {
+    //          $idsForQueries = [-1]; // Prevent SQL error with empty "IN ()" clause
+    //     }
+        
+    //     // 6. Get stock and reservation info for all relevant products AND sets in single queries
+    //     $productProperties = $this->getProductsProperties($idsForQueries);
+    //     $readyForShipmentQuantities = $this->getProductReadyForShipmentQuantities($idsForQueries);
+
+    //     // 7. Main checking logic
+    //     $dealsToMove = [];
+    //     foreach ($deals as $deal) {
+    //         $dealId = $deal['ID'];
+    //         $warehouseId = $deal['UF_CRM_1753786869'];
+
+    //         // Skip deals with no warehouse or an unsupported warehouse
+    //         if (!$warehouseId || !in_array($warehouseId, [$yuzhnyPortId, $ramenskiyId])) {
+    //             continue;
+    //         }
+
+    //         $productsToCheck = $flatProductsByDeal[$dealId] ?? [];
+            
+    //         // Deals without products can be moved
+    //         if (empty($productsToCheck)) {
+    //             $dealsToMove[] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
+    //             continue;
+    //         }
+
+    //         $isStockSufficient = true;
+    //         foreach ($productsToCheck as $productInfo) {
+    //             $productId = $productInfo['PRODUCT_ID'];
+    //             $quantityNeeded = $productInfo['QUANTITY'];
+                
+    //             // Determine which product ID to use for stock and reservation checks.
+    //             // If it's a component, use its parent set ID. Otherwise, use its own ID.
+    //             $setInfo = $setInfoForAllProducts[$productId] ?? null;
+    //             $idToCheck = ($setInfo && !empty($setInfo['SET_ID'])) ? $setInfo['SET_ID'] : $productId;
+                
+    //             $stockPropertyKey = ($warehouseId == $yuzhnyPortId) ? 'PROPERTY_135_VALUE' : 'PROPERTY_145_VALUE';
+                
+    //             $totalStock = (float)($productProperties[$idToCheck][$stockPropertyKey] ?? 0);
+    //             $reservedStock = (float)($readyForShipmentQuantities[$idToCheck]['by_warehouse'][$warehouseId] ?? 0);
+    //             $freeStock = $totalStock - $reservedStock;
+                
+    //             if ($freeStock < $quantityNeeded) {
+    //                 $isStockSufficient = false;
+    //                 break; // Not enough stock for one of the products, stop checking this deal
+    //             }
+    //         }
+
+    //         if ($isStockSufficient) {
+    //             $dealsToMove[] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
+    //         }
+    //     }
+
+    //     return $dealsToMove;
+    // }
+
+    public function getDealsForAutoMove()
     {
         // 1. Check module dependencies
         if (!\Bitrix\Main\Loader::includeModule('crm') || !\Bitrix\Main\Loader::includeModule('iblock') || !\Bitrix\Main\Loader::includeModule('catalog')) {
@@ -1990,48 +2159,82 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         $readyForShipmentQuantities = $this->getProductReadyForShipmentQuantities($idsForQueries);
 
         // 7. Main checking logic
-        $dealsToMove = [];
+        $dealsToMove = [
+            'to_stage_25' => [],
+            'to_stage_28' => []
+        ];
+
         foreach ($deals as $deal) {
             $dealId = $deal['ID'];
-            $warehouseId = $deal['UF_CRM_1753786869'];
+            $assignedWarehouseId = $deal['UF_CRM_1753786869'];
 
             // Skip deals with no warehouse or an unsupported warehouse
-            if (!$warehouseId || !in_array($warehouseId, [$yuzhnyPortId, $ramenskiyId])) {
+            if (!$assignedWarehouseId || !in_array($assignedWarehouseId, [$yuzhnyPortId, $ramenskiyId])) {
                 continue;
             }
 
             $productsToCheck = $flatProductsByDeal[$dealId] ?? [];
             
-            // Deals without products can be moved
+            // Deals without products can be moved to stage 25 directly
             if (empty($productsToCheck)) {
-                $dealsToMove[] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
+                $dealsToMove['to_stage_25'][] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
                 continue;
             }
 
-            $isStockSufficient = true;
+            // --- Check 1: Assigned Warehouse ---
+            $isStockSufficientOnAssigned = true;
             foreach ($productsToCheck as $productInfo) {
                 $productId = $productInfo['PRODUCT_ID'];
                 $quantityNeeded = $productInfo['QUANTITY'];
                 
-                // Determine which product ID to use for stock and reservation checks.
-                // If it's a component, use its parent set ID. Otherwise, use its own ID.
                 $setInfo = $setInfoForAllProducts[$productId] ?? null;
                 $idToCheck = ($setInfo && !empty($setInfo['SET_ID'])) ? $setInfo['SET_ID'] : $productId;
                 
-                $stockPropertyKey = ($warehouseId == $yuzhnyPortId) ? 'PROPERTY_135_VALUE' : 'PROPERTY_145_VALUE';
+                $stockPropertyKey = ($assignedWarehouseId == $yuzhnyPortId) ? 'PROPERTY_135_VALUE' : 'PROPERTY_145_VALUE';
                 
                 $totalStock = (float)($productProperties[$idToCheck][$stockPropertyKey] ?? 0);
-                $reservedStock = (float)($readyForShipmentQuantities[$idToCheck]['by_warehouse'][$warehouseId] ?? 0);
+                $reservedStock = (float)($readyForShipmentQuantities[$idToCheck]['by_warehouse'][$assignedWarehouseId] ?? 0);
                 $freeStock = $totalStock - $reservedStock;
                 
                 if ($freeStock < $quantityNeeded) {
-                    $isStockSufficient = false;
-                    break; // Not enough stock for one of the products, stop checking this deal
+                    $isStockSufficientOnAssigned = false;
+                    break;
                 }
             }
 
-            if ($isStockSufficient) {
-                $dealsToMove[] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
+            if ($isStockSufficientOnAssigned) {
+                $dealsToMove['to_stage_25'][] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
+                continue; // Move to next deal
+            }
+
+            // --- Check 2: Other Warehouse ---
+            $otherWarehouseId = ($assignedWarehouseId == $yuzhnyPortId) ? $ramenskiyId : $yuzhnyPortId;
+            if (!$otherWarehouseId) {
+                continue;
+            }
+
+            $isStockSufficientOnOther = true;
+            foreach ($productsToCheck as $productInfo) {
+                $productId = $productInfo['PRODUCT_ID'];
+                $quantityNeeded = $productInfo['QUANTITY'];
+
+                $setInfo = $setInfoForAllProducts[$productId] ?? null;
+                $idToCheck = ($setInfo && !empty($setInfo['SET_ID'])) ? $setInfo['SET_ID'] : $productId;
+
+                $stockPropertyKey = ($otherWarehouseId == $yuzhnyPortId) ? 'PROPERTY_135_VALUE' : 'PROPERTY_145_VALUE';
+
+                $totalStock = (float)($productProperties[$idToCheck][$stockPropertyKey] ?? 0);
+                $reservedStock = (float)($readyForShipmentQuantities[$idToCheck]['by_warehouse'][$otherWarehouseId] ?? 0);
+                $freeStock = $totalStock - $reservedStock;
+
+                if ($freeStock < $quantityNeeded) {
+                    $isStockSufficientOnOther = false;
+                    break;
+                }
+            }
+
+            if ($isStockSufficientOnOther) {
+                $dealsToMove['to_stage_28'][] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
             }
         }
 
