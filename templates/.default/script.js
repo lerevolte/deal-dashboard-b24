@@ -180,10 +180,101 @@ BX.ready(function() {
     function renderDealActions(stageId) {
         const movableStages = ['20', '31', '28', '21_27', '25', '17', '13_26'];
         let actionsHtml = '';
+        
+        // Кнопка перемещения сделок
         if (movableStages.includes(stageId)) {
-            actionsHtml = `<button class="ui-btn ui-btn-sm ui-btn-light-border dashboard-actions-button" data-action="show-move-menu" title="Переместить сделку"><span class="dashboard-actions-icon"></span></button>`;
+            actionsHtml += `<button class="ui-btn ui-btn-sm ui-btn-light-border dashboard-actions-button" data-action="show-move-menu" title="Переместить сделку"><span class="dashboard-actions-icon"></span></button>`;
         }
+        
+        // НОВАЯ КНОПКА ДЛЯ СКАЧИВАНИЯ ЗАКАЗОВ
+        actionsHtml += `<button id="download-deals-csv" class="ui-btn ui-btn-light-border ui-btn-xs" style="margin-left: 5px;">Скачать заказы</button>`;
+        
         if (dealActionsContainer) dealActionsContainer.innerHTML = actionsHtml;
+
+        // ДОБАВЛЯЕМ ОБРАБОТЧИК ДЛЯ НОВОЙ КНОПКИ
+        const newDownloadDealsCsvBtn = document.getElementById('download-deals-csv');
+        if (newDownloadDealsCsvBtn) {
+            newDownloadDealsCsvBtn.addEventListener('click', function() {
+                if (!activeStageItem) {
+                    alert('Сначала выберите стадию.');
+                    return;
+                }
+                const stageId = activeStageItem.dataset.stageId;
+                const originalText = this.innerHTML;
+                
+                this.innerHTML = 'Загрузка...';
+                this.disabled = true;
+
+                const requestData = { 
+                    stageId: stageId,
+                    warehouseFilterId: currentFilter.warehouseId,
+                    productSearchQuery: currentFilter.type === 'product' ? currentFilter.value : null
+                };
+
+                BX.ajax.runComponentAction('company:deal.dashboard2', 'getDealsForCsv', {
+                    mode: 'class',
+                    data: requestData
+                }).then(response => {
+                    this.innerHTML = originalText;
+                    this.disabled = false;
+                    const deals = response.data;
+                    if (!deals || deals.length === 0) {
+                        alert('Нет заказов для выгрузки в этой стадии.');
+                        return;
+                    }
+                    const csvContent = convertDealsToCSV(deals);
+                    const fileName = `deals-stage-${stageId}.csv`;
+                    downloadCSV(csvContent, fileName);
+                }).catch(response => {
+                    this.innerHTML = originalText;
+                    this.disabled = false;
+                    const errorMessage = response && response.errors && response.errors[0] ? response.errors[0].message : 'Неизвестная ошибка';
+                    alert('Ошибка при выгрузке данных: ' + errorMessage);
+                });
+            });
+        }
+    }
+
+    function convertDealsToCSV(deals) {
+        if (!deals || deals.length === 0) {
+            return '';
+        }
+        
+        const headers = '"ID","Название","Ответственный","Дата создания","Дата переноса","Срок (дни)","Общий вес (кг)","Склад отгрузки","Комментарий"';
+        const rows = deals.map(deal => {
+            const id = deal.ID || '';
+            const title = (deal.TITLE || '').toString().replace(/"/g, '""');
+            const assignedBy = (deal.ASSIGNED_BY_NAME || '').toString().replace(/"/g, '""');
+            
+            let dateCreate = '';
+            if (deal.DATE_CREATE) {
+                try {
+                    const date = new Date(deal.DATE_CREATE);
+                    dateCreate = date.toLocaleDateString('ru-RU');
+                } catch (e) {
+                    dateCreate = deal.DATE_CREATE;
+                }
+            }
+            
+            let movedTime = '';
+            if (deal.MOVED_TIME) {
+                try {
+                    const date = new Date(deal.MOVED_TIME);
+                    movedTime = date.toLocaleDateString('ru-RU') + ' ' + date.toLocaleTimeString('ru-RU');
+                } catch (e) {
+                    movedTime = deal.MOVED_TIME;
+                }
+            }
+            
+            const assemblyTime = deal.assemblyTime || '';
+            const totalWeight = deal.totalWeight ? Math.round(deal.totalWeight * 100) / 100 : '';
+            const warehouse = (deal.UF_CRM_1753786869 || '').toString().replace(/"/g, '""');
+            const comments = (deal.COMMENTS || '').toString().replace(/"/g, '""').replace(/\n/g, ' ').replace(/\r/g, ' ');
+            
+            return `"${id}","${title}","${assignedBy}","${dateCreate}","${movedTime}","${assemblyTime}","${totalWeight}","${warehouse}","${comments}"`;
+        });
+        
+        return [headers, ...rows].join('\r\n');
     }
 
     function applySortIndicator(containerId, sortBy, sortOrder) {
