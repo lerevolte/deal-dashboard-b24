@@ -1763,7 +1763,7 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 $html .= '<th class="col-doc-date" data-sort-key="CLOSING_DOC_DATE">Дата документа</th>';
                 $html .= '<th class="col-shipping-warehouse" data-sort-key="UF_CRM_1755602273">Склад отгрузки Логистика</th>';
             }
-            if (in_array($stageId, ['17', '13_26', '15', '25', '20', '28'])) {
+            if (in_array($stageId, ['17', '13_26', '15', '25', '20', '28', '31', '21_27'])) {
                 $html .= '<th class="col-shipping-warehouse" data-sort-key="UF_CRM_1753786869">Склад отгрузки</th>';
             }
             if (in_array($stageId, ['17', '13_26', '15', '25'])) {
@@ -1895,7 +1895,7 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                     $selectHtml .= "</select>";
                     $html .= "<td class='col-shipping-warehouse'>{$selectHtml}</td>";
                 }
-                if (in_array($stageId, ['17', '13_26', '15', '25', '20', '28'])) {
+                if (in_array($stageId, ['17', '13_26', '15', '25', '20', '28', '31', '21_27'])) {
                     $filterWarehouseId = $item['UF_CRM_1753786869'] ?? '';
                     $filterWarehouseValue = isset($filterWarehousesMap[$filterWarehouseId]) ? htmlspecialcharsbx($filterWarehousesMap[$filterWarehouseId]) : '';
                     $html .= "<td class='col-shipping-warehouse'>{$filterWarehouseValue}</td>";
