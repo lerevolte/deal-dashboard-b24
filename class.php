@@ -1772,7 +1772,36 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             }
             
             if ($showAssemblyStatus) $html .= '<th class="col-assembly-status" data-sort-key="UF_CRM_1755005612">Статус сборки</th>';
-            $html .= '<th class="col-assembly-time" data-sort-key="assemblyTime">Срок</th>';
+            $assemblyTimeHeader = 'Срок';
+            $timeUnit = ' д.';
+            $limit = '';
+    
+            switch ($stageId) {
+                case '13_26':
+                case '17':
+                    $limit = ' (20' . $timeUnit . ')';
+                    break;
+                case '25':
+                case 'FINAL_INVOICE':
+                case 'NEW':
+                    $limit = ' (1' . $timeUnit . ')';
+                    break;
+                case '21_27':
+                    $limit = ' (3' . $timeUnit . ')';
+                    break;
+                case '31':
+                    $limit = ' (2' . $timeUnit . ')';
+                    break;
+                case '10':
+                    $limit = ' (30' . $timeUnit . ')';
+                    break;
+                case '20':
+                    $timeUnit = ' мин.';
+                    $limit = ' (60' . $timeUnit . ')';
+                    break;
+            }
+            $assemblyTimeHeader .= $limit;
+            $html .= '<th class="col-assembly-time" data-sort-key="assemblyTime">' . $assemblyTimeHeader . '</th>';
             if ($isDealList) $html .= '<th class="col-date" data-sort-key="MOVED_TIME">Дата переноса</th>';
             $html .= '<th class="col-chat">Чат</th>';
         }
