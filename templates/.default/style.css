@@ -125,7 +125,7 @@ table td.col-name {
 }
 
 .dashboard-table thead tr {
-    border-bottom: 1px solid #e0e0e0;
+    /* border-bottom: 1px solid #e0e0e0;  Убрали рамку отсюда, чтобы добавить ее к th */
 }
 
 .dashboard-list-item {
@@ -185,9 +185,14 @@ td.col-quantity {
     color: #828B95;
     font-size: 12px;
     text-transform: uppercase;
-    position: relative;
+    position: sticky; /* Делаем заголовок "липким" */
+    top: 0; /* Приклеиваем к верху контейнера */
+    background: #fff; /* Добавляем фон, чтобы текст под ним не просвечивал */
+    z-index: 1; /* Размещаем поверх остальных ячеек */
+    border-bottom: 1px solid #e0e0e0; /* Добавляем нижнюю границу для визуального отделения */
     padding-right: 20px;
 }
+
 
 /* ИСПРАВЛЕНО: Стили для сортировки */
 .dashboard-table th[data-sort-key] {
