@@ -283,10 +283,20 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         foreach ($deals as &$deal) {
             if (isset($assemblyTimes[$deal['ID']])) $deal['assemblyTime'] = $assemblyTimes[$deal['ID']];
             if (isset($totalWeights[$deal['ID']])) $deal['totalWeight'] = $totalWeights[$deal['ID']];
+            
             if (isset($closingDocs[$deal['ID']])) {
+                $titles = array_column($closingDocs[$deal['ID']], 'TITLE');
+                $dates = array_filter(array_column($closingDocs[$deal['ID']], 'DATE'));
+
                 $deal['closingDoc'] = $closingDocs[$deal['ID']];
-                $deal['CLOSING_DOC_TITLE'] = $closingDocs[$deal['ID']]['TITLE'] ?? '';
-                $deal['CLOSING_DOC_DATE'] = $closingDocs[$deal['ID']]['DATE'] ?? null;
+                $deal['CLOSING_DOC_TITLE'] = implode(', ', $titles);
+
+                if (!empty($dates)) {
+                    $formattedDates = array_map(fn($date) => $date->format('d.m.Y'), $dates);
+                    $deal['CLOSING_DOC_DATE'] = implode(', ', array_unique($formattedDates));
+                } else {
+                    $deal['CLOSING_DOC_DATE'] = null;
+                }
             } else {
                 $deal['CLOSING_DOC_TITLE'] = '';
                 $deal['CLOSING_DOC_DATE'] = null;
@@ -380,7 +390,10 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             foreach ($items as $item) {
                 $dealId = $item->get('PARENT_ID_2');
                 if ($dealId) {
-                    $documents[$dealId] = [
+                    if (!isset($documents[$dealId])) {
+                        $documents[$dealId] = [];
+                    }
+                    $documents[$dealId][] = [
                         'ID' => $item->getId(), 
                         'TITLE' => $item->getTitle(),
                         'DATE' => $item->get('UF_CRM_10_DATE') 
@@ -1167,8 +1180,14 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             
             if (isset($closingDocs[$deal['ID']])) {
                 $deal['closingDoc'] = $closingDocs[$deal['ID']];
-                $deal['CLOSING_DOC_TITLE'] = $closingDocs[$deal['ID']]['TITLE'] ?? '';
-                $deal['CLOSING_DOC_DATE'] = $closingDocs[$deal['ID']]['DATE'] ?? null;
+                $deal['CLOSING_DOC_TITLE'] = implode(', ', array_column($closingDocs[$deal['ID']], 'TITLE'));
+                $dates = array_filter(array_column($closingDocs[$deal['ID']], 'DATE'));
+                 if (!empty($dates)) {
+                    $formattedDates = array_map(fn($date) => $date->format('d.m.Y'), $dates);
+                    $deal['CLOSING_DOC_DATE'] = implode(', ', array_unique($formattedDates));
+                } else {
+                    $deal['CLOSING_DOC_DATE'] = null;
+                }
             } else {
                 $deal['CLOSING_DOC_TITLE'] = '';
                 $deal['CLOSING_DOC_DATE'] = null;
@@ -1230,20 +1249,15 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 return !in_array($row['PRODUCT_ID'], $this->excludedProductIds);
             });
 
-            // --- FIX START V5: Final logic for correct quantity calculation ---
-            // 1. Get all products/sets that are aggregated from the current stage's deals
             $productIdsInStage = array_unique(array_column($productRows, 'PRODUCT_ID'));
             $setInfoForStageProducts = $this->getProductsSetInfo($productIdsInStage);
             $productsAggregated = $this->aggregateProducts($productRows, $setInfoForStageProducts);
 
-            // 2. Identify all sets relevant to the current view
             $allRelevantSetIds = [];
-            // Find sets that are parents of products on this stage
             $parentSetIds = array_unique(array_filter(array_column($setInfoForStageProducts, 'SET_ID')));
             if (!empty($parentSetIds)) {
                 $allRelevantSetIds = array_merge($allRelevantSetIds, $parentSetIds);
             }
-            // Find products that are themselves sets
             foreach ($productsAggregated as $p) {
                 if ($p['IS_SET']) {
                     $allRelevantSetIds[] = $p['PRODUCT_ID'];
@@ -1251,11 +1265,9 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             }
             $allRelevantSetIds = array_unique($allRelevantSetIds);
 
-            // 3. Build the master list of all IDs for which we need to calculate total quantities
-            $allIdsForQuantities = $productIdsInStage; // Start with individual products
-            $allIdsForQuantities = array_merge($allIdsForQuantities, $allRelevantSetIds); // Add the sets themselves
+            $allIdsForQuantities = $productIdsInStage;
+            $allIdsForQuantities = array_merge($allIdsForQuantities, $allRelevantSetIds);
 
-            // 4. For all relevant sets, find ALL their component parts and add them to the master list
             if (!empty($allRelevantSetIds)) {
                 $dbRes = \CIBlockElement::GetList([], ['IBLOCK_ID' => 23, '=PROPERTY_170' => $allRelevantSetIds], false, false, ['ID']);
                 while ($product = $dbRes->Fetch()) {
@@ -1264,11 +1276,12 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             }
             $allIdsForQuantities = array_unique($allIdsForQuantities);
 
-            // 5. Now we have the complete list. Get full set info and calculate quantities.
             $productsSetInfo = $this->getProductsSetInfo($allIdsForQuantities);
             $readyForShipmentQuantities = $this->getProductReadyForShipmentQuantities($allIdsForQuantities);
             $pipelineQuantitiesIndividual = $this->getProductQuantitiesByWarehouse($allIdsForQuantities, null);
-            // --- FIX END V5 ---
+            // NEW: Get quantities for the "Сборка" column
+            $assemblyPipelineQuantities = $this->getProductQuantitiesOnStages($allIdsForQuantities, ['31', '28', '21', '27']);
+
 
             if (!empty($productSearchQuery)) {
                 $searchQuery = trim($productSearchQuery);
@@ -1308,7 +1321,8 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 $assemblyQty = 0;
                 $deliveryQty = 0;
                 $pickupQty = 0;
-                $assembledQty = 0; // Для нового столбца
+                $assembledQty = 0;
+                $sborkaQty = 0; // For new column
                 $readyQtyByWarehouse = [];
 
                 if ($product['IS_SET']) {
@@ -1317,7 +1331,8 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                             $assemblyQty += $pipelineQuantitiesIndividual[$individualId]['assembly'] ?? 0;
                             $deliveryQty += $pipelineQuantitiesIndividual[$individualId]['delivery'] ?? 0;
                             $pickupQty += $pipelineQuantitiesIndividual[$individualId]['pickup'] ?? 0;
-                            $assembledQty += $pipelineQuantitiesIndividual[$individualId]['assembled'] ?? 0; // Для нового столбца
+                            $assembledQty += $pipelineQuantitiesIndividual[$individualId]['assembled'] ?? 0;
+                            $sborkaQty += $assemblyPipelineQuantities[$individualId] ?? 0;
 
                             $componentReadyInfo = $readyForShipmentQuantities[$individualId] ?? ['total' => 0, 'by_warehouse' => []];
                             $readyQty += $componentReadyInfo['total'];
@@ -1331,8 +1346,12 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                         $assemblyQty += $pipelineQuantitiesIndividual[$elementId]['assembly'] ?? 0;
                         $deliveryQty += $pipelineQuantitiesIndividual[$elementId]['delivery'] ?? 0;
                         $pickupQty += $pipelineQuantitiesIndividual[$elementId]['pickup'] ?? 0;
-                        $assembledQty += $pipelineQuantitiesIndividual[$elementId]['assembled'] ?? 0; // Для нового столбца
+                        $assembledQty += $pipelineQuantitiesIndividual[$elementId]['assembled'] ?? 0;
                     }
+                    if (isset($assemblyPipelineQuantities[$elementId])) {
+                         $sborkaQty += $assemblyPipelineQuantities[$elementId];
+                    }
+
                     $setReadyInfo = $readyForShipmentQuantities[$elementId] ?? ['total' => 0, 'by_warehouse' => []];
                     $readyQty += $setReadyInfo['total'];
                     foreach($setReadyInfo['by_warehouse'] as $whId => $whQty) {
@@ -1344,8 +1363,10 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                         $assemblyQty = $pipelineQuantitiesIndividual[$elementId]['assembly'] ?? 0;
                         $deliveryQty = $pipelineQuantitiesIndividual[$elementId]['delivery'] ?? 0;
                         $pickupQty = $pipelineQuantitiesIndividual[$elementId]['pickup'] ?? 0;
-                        $assembledQty = $pipelineQuantitiesIndividual[$elementId]['assembled'] ?? 0; // Для нового столбца
+                        $assembledQty = $pipelineQuantitiesIndividual[$elementId]['assembled'] ?? 0;
                     }
+                    $sborkaQty = $assemblyPipelineQuantities[$elementId] ?? 0;
+
                     $productReadyInfo = $readyForShipmentQuantities[$elementId] ?? ['total' => 0, 'by_warehouse' => []];
                     $readyQty = $productReadyInfo['total'];
                     $readyQtyByWarehouse = $productReadyInfo['by_warehouse'];
@@ -1355,7 +1376,8 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 $product['ASSEMBLY_QTY'] = $assemblyQty;
                 $product['DELIVERY_QTY'] = $deliveryQty;
                 $product['PICKUP_QTY'] = $pickupQty;
-                $product['ASSEMBLED_QTY'] = $assembledQty; // Для нового столбца
+                $product['ASSEMBLED_QTY'] = $assembledQty;
+                $product['SBORKA_QTY'] = $sborkaQty; // For new column
                 
                 $yuzhnyPortStock = (float)($product['PROPERTY_135_VALUE'] ?? 0);
                 $ramenskiyStock = (float)($product['PROPERTY_145_VALUE'] ?? 0);
@@ -1363,16 +1385,11 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 $readyYuzhny = $yuzhnyPortId ? ($readyQtyByWarehouse[$yuzhnyPortId] ?? 0) : 0;
                 $readyRamenskiy = $ramenskiyId ? ($readyQtyByWarehouse[$ramenskiyId] ?? 0) : 0;
                 
-                // --- НАЧАЛО ИЗМЕНЕНИЙ ---
                 $product['READY_QTY_YUZHNY'] = $readyYuzhny;
                 $product['READY_QTY_RAMENSKIY'] = $readyRamenskiy;
-                // --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
                 $product['FREE_STOCK_YUZHNY'] = $yuzhnyPortStock - $readyYuzhny;
-                //if ($product['FREE_STOCK_YUZHNY'] < 0) $product['FREE_STOCK_YUZHNY'] = 0;
-
                 $product['FREE_STOCK_RAMENSKIY'] = $ramenskiyStock - $readyRamenskiy;
-                //if ($product['FREE_STOCK_RAMENSKIY'] < 0) $product['FREE_STOCK_RAMENSKIY'] = 0;
             }
             unset($product);
             
@@ -1427,7 +1444,6 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         $finalAggregatedProductIds = array_column($aggregatedItems, 'PRODUCT_ID');
         $productProperties = $this->getProductsProperties($finalAggregatedProductIds);
         
-        // --- FIX START: Replicate the same robust logic from getStageDataAction ---
         $allIdsForQuantities = $allIndividualProductIdsInDeal;
         $setIdsToLookup = [];
 
@@ -1456,9 +1472,9 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         $productsSetInfo = $this->getProductsSetInfo($allIdsForQuantities);
         $readyForShipmentQuantities = $this->getProductReadyForShipmentQuantities($allIdsForQuantities);
         $pipelineQuantitiesIndividual = $this->getProductQuantitiesByWarehouse($allIdsForQuantities, null);
-        // --- FIX END ---
+        // NEW: Get quantities for the "Сборка" column
+        $assemblyPipelineQuantities = $this->getProductQuantitiesOnStages($allIdsForQuantities, ['31', '28', '21', '27']);
         
-        // --- НАЧАЛО ИЗМЕНЕНИЙ: Добавляем поиск ID складов ---
         $this->getFilterWarehouseFieldInfo();
         $yuzhnyPortId = null;
         $ramenskiyId = null;
@@ -1472,7 +1488,6 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 }
             }
         }
-        // --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
         foreach ($aggregatedItems as &$product) {
             $elementId = $product['PRODUCT_ID'];
@@ -1485,6 +1500,7 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             $deliveryQty = 0;
             $pickupQty = 0;
             $assembledQty = 0;
+            $sborkaQty = 0; // For new column
             $readyQtyByWarehouse = [];
 
             if ($product['IS_SET']) {
@@ -1494,6 +1510,7 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                         $deliveryQty += $pipelineQuantitiesIndividual[$individualId]['delivery'] ?? 0;
                         $pickupQty += $pipelineQuantitiesIndividual[$individualId]['pickup'] ?? 0;
                         $assembledQty += $pipelineQuantitiesIndividual[$individualId]['assembled'] ?? 0;
+                        $sborkaQty += $assemblyPipelineQuantities[$individualId] ?? 0;
 
                         $componentReadyInfo = $readyForShipmentQuantities[$individualId] ?? ['total' => 0, 'by_warehouse' => []];
                         $readyQty += $componentReadyInfo['total'];
@@ -1509,6 +1526,9 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                     $pickupQty += $pipelineQuantitiesIndividual[$elementId]['pickup'] ?? 0;
                     $assembledQty += $pipelineQuantitiesIndividual[$elementId]['assembled'] ?? 0;
                 }
+                 if (isset($assemblyPipelineQuantities[$elementId])) {
+                     $sborkaQty += $assemblyPipelineQuantities[$elementId];
+                }
                 $setReadyInfo = $readyForShipmentQuantities[$elementId] ?? ['total' => 0, 'by_warehouse' => []];
                 $readyQty += $setReadyInfo['total'];
                 foreach($setReadyInfo['by_warehouse'] as $whId => $whQty) {
@@ -1522,9 +1542,11 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                     $pickupQty = $pipelineQuantitiesIndividual[$elementId]['pickup'] ?? 0;
                     $assembledQty = $pipelineQuantitiesIndividual[$elementId]['assembled'] ?? 0;
                 }
+                $sborkaQty = $assemblyPipelineQuantities[$elementId] ?? 0;
+
                 $productReadyInfo = $readyForShipmentQuantities[$elementId] ?? ['total' => 0, 'by_warehouse' => []];
                 $readyQty = $productReadyInfo['total'];
-                $readyQtyByWarehouse = $productReadyInfo['by_warehouse']; // FIX
+                $readyQtyByWarehouse = $productReadyInfo['by_warehouse'];
             }
         
             $product['READY_FOR_SHIPMENT_QTY'] = $readyQty;
@@ -1532,22 +1554,18 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             $product['DELIVERY_QTY'] = $deliveryQty;
             $product['PICKUP_QTY'] = $pickupQty;
             $product['ASSEMBLED_QTY'] = $assembledQty;
+            $product['SBORKA_QTY'] = $sborkaQty; // For new column
             
             $yuzhnyPortStock = (float)($product['PROPERTY_135_VALUE'] ?? 0);
             $ramenskiyStock = (float)($product['PROPERTY_145_VALUE'] ?? 0);
             
-            // --- НАЧАЛО ИЗМЕНЕНИЙ ---
             $readyYuzhny = $yuzhnyPortId ? ($readyQtyByWarehouse[$yuzhnyPortId] ?? 0) : 0;
             $readyRamenskiy = $ramenskiyId ? ($readyQtyByWarehouse[$ramenskiyId] ?? 0) : 0;
             $product['READY_QTY_YUZHNY'] = $readyYuzhny;
             $product['READY_QTY_RAMENSKIY'] = $readyRamenskiy;
 
-            $product['FREE_STOCK_YUZHNY'] = $yuzhnyPortStock - $readyYuzhny; // FIX
-            //if ($product['FREE_STOCK_YUZHNY'] < 0) $product['FREE_STOCK_YUZHNY'] = 0;
-            
-            $product['FREE_STOCK_RAMENSKIY'] = $ramenskiyStock - $readyRamenskiy; // FIX
-            //if ($product['FREE_STOCK_RAMENSKIY'] < 0) $product['FREE_STOCK_RAMENSKIY'] = 0;
-            // --- КОНЕЦ ИЗМЕНЕНИЙ ---
+            $product['FREE_STOCK_YUZHNY'] = $yuzhnyPortStock - $readyYuzhny;
+            $product['FREE_STOCK_RAMENSKIY'] = $ramenskiyStock - $readyRamenskiy;
         }
         unset($product);
         
@@ -1581,11 +1599,9 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 $componentIds[] = (int)$product['ID'];
             }
             
-            // --- FIX START: Search for deals by set ID itself and its components ---
             $productIdsForQty = $componentIds;
             $productIdsForQty[] = (int)$setId;
             $productIdsForQty = array_unique($productIdsForQty);
-            // --- FIX END ---
 
             if (!empty($productIdsForQty)) {
                 $rows = ProductRowTable::getList(['select' => ['OWNER_ID'], 'filter' => ['=OWNER_TYPE' => 'D', '@PRODUCT_ID' => $productIdsForQty]])->fetchAll();
@@ -1635,7 +1651,8 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                     'UF_CRM_1738582841' => $deal['UF_CRM_1738582841'], 'UF_CRM_1755005612' => $deal['UF_CRM_1755005612'],
                     'UF_CRM_1755602273' => $deal['UF_CRM_1755602273'],
                     'UF_CRM_1753786869' => $deal['UF_CRM_1753786869'],
-                    'COMMENTS' => $deal['COMMENTS']
+                    'COMMENTS' => $deal['COMMENTS'],
+                    'ASSIGNED_BY_ID' => $deal['ASSIGNED_BY_ID']
                 ];
                 if (isset($assemblyTimes[$deal['ID']])) $dealData['assemblyTime'] = $assemblyTimes[$deal['ID']];
                 $assemblyTime = $dealData['assemblyTime'] ?? 0;
@@ -1668,17 +1685,19 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 if ($isOverdue) {
                     $dealData['isOverdue'] = true;
                 }
-                // if($stageId === '10' && ($deal['assemblyTime'] ?? 0) >= 60) {
-                //     $dealData['isOverdue'] = true;
-                // }
                 if (isset($chatInfo[$deal['ID']])) $dealData['chatInfo'] = $chatInfo[$deal['ID']];
                 if (isset($totalWeights[$deal['ID']])) $dealData['totalWeight'] = $totalWeights[$deal['ID']];
                 
-                // ADDED for sorting
                 if (isset($closingDocs[$deal['ID']])) {
                     $dealData['closingDoc'] = $closingDocs[$deal['ID']];
-                    $dealData['CLOSING_DOC_TITLE'] = $closingDocs[$deal['ID']]['TITLE'] ?? '';
-                    $dealData['CLOSING_DOC_DATE'] = $closingDocs[$deal['ID']]['DATE'] ?? null;
+                    $dealData['CLOSING_DOC_TITLE'] = implode(', ', array_column($closingDocs[$deal['ID']], 'TITLE'));
+                     $dates = array_filter(array_column($closingDocs[$deal['ID']], 'DATE'));
+                     if (!empty($dates)) {
+                        $formattedDates = array_map(fn($date) => $date->format('d.m.Y'), $dates);
+                        $dealData['CLOSING_DOC_DATE'] = implode(', ', array_unique($formattedDates));
+                    } else {
+                        $dealData['CLOSING_DOC_DATE'] = null;
+                    }
                 } else {
                     $dealData['CLOSING_DOC_TITLE'] = '';
                     $dealData['CLOSING_DOC_DATE'] = null;
@@ -1713,12 +1732,9 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         }
 
         $isShipmentView = in_array($stageId, ['25', '17', '13_26']);
-        // --- НАЧАЛО ИЗМЕНЕНИЙ ---
         $showShipmentStockCols = in_array($stageId, ['20', '31', '21_27', '28']);
-        // --- КОНЕЦ ИЗМЕНЕНИЙ ---
         $showYuzhnyPort = true;
         $showRamenskiy = true;
-        $showSborka = in_array($stageId, ['13_26', '20', '31', '28', '21', '21_27']);
 
         $html .= '<thead><tr>';
         $html .= '<th class="col-number" data-sort-key="ID">#</th>';
@@ -1731,6 +1747,9 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         if ($type === 'product_with_total_quantity' || $type === 'deal_product') {
             $html .= '<th class="col-name" data-sort-key="PRODUCT_NAME">Название</th>';
             $html .= '<th class="col-quantity" data-sort-key="TOTAL_QUANTITY">Требуется</th>';
+            if (in_array($stageId, ['20', '31', '21_27', '28'])) {
+                 $html .= '<th class="col-property">Сборка</th>';
+            }
             if ($showYuzhnyPort) {
                 $html .= '<th class="col-property col-svob-yup">Своб. ЮП</th>';
             }
@@ -1765,6 +1784,9 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             }
             if (in_array($stageId, ['17', '13_26', '15', '25', '20', '28', '31', '21_27'])) {
                 $html .= '<th class="col-shipping-warehouse" data-sort-key="UF_CRM_1753786869">Склад отгрузки</th>';
+            }
+            if ($stageId === '28') {
+                $html .= '<th class="col-total-weight" data-sort-key="totalWeight">Общий вес</th>';
             }
             if (in_array($stageId, ['17', '13_26', '15', '25'])) {
                 if(!$isShipmentView)
@@ -1814,8 +1836,8 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             $html .= "<td class='col-number'>-</td>";
             $html .= "<td class='col-name'><span class='item-name'><strong>Все товары</strong></span></td>";
 
-            // --- НАЧАЛО ИЗМЕНЕНИЙ: Корректный подсчет столбцов для colspan ---
             $emptyCellsCount = 1; // "Требуется"
+            if (in_array($stageId, ['20', '31', '21_27', '28'])) $emptyCellsCount++;
             if ($showYuzhnyPort) $emptyCellsCount++;
             if ($showRamenskiy) $emptyCellsCount++;
             if ($isShipmentView) {
@@ -1824,7 +1846,6 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             if ($showShipmentStockCols) {
                 $emptyCellsCount += 2;
             }
-            // --- КОНЕЦ ИЗМЕНЕНИЙ ---
             $html .= str_repeat('<td></td>', $emptyCellsCount);
             $html .= "</tr>";
         }
@@ -1844,27 +1865,24 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             }
             
             $rowClasses = ['dashboard-list-item'];
-            //if (!empty($item['isOverdue'])) $rowClasses[] = 'is-overdue';
             $html .= "<tr class='" . implode(' ', $rowClasses) . "' {$dataAttrs}>";
             $html .= "<td class='col-number'>{$counter}.</td>";
             
             if ($type === 'product_with_total_quantity' || $type === 'deal_product') {
-                $excludedIdsForHighlight = [23089, 111, 113];
-                $productId = $item['PRODUCT_ID'];
-
                 $title = htmlspecialcharsbx($item['PRODUCT_NAME']);
                 $requiredQuantity = (float)($item['TOTAL_QUANTITY'] ?? $item['QUANTITY']);
                 $html .= "<td class='col-name'><span class='item-name'>{$title}</span></td>";
                 $html .= "<td class='col-quantity'><strong>{$requiredQuantity}</strong> шт.</td>";
+                if (in_array($stageId, ['20', '31', '21_27', '28'])) {
+                     $html .= "<td class='col-property'><strong>" . ($item['SBORKA_QTY'] ?? '0') . "</strong> шт.</td>";
+                }
                 if ($showYuzhnyPort) {
                     $freeStockYuzhny = $item['FREE_STOCK_YUZHNY'] ?? 0;
-                    //$freeStockYuzhny = $freeStockYuzhny > 0 ? $freeStockYuzhny : 0;
                     $yuzhnyPortValue = (float)($item['PROPERTY_135_VALUE'] ?? 0);
                     $html .= "<td class='col-property col-svob-yup ".($freeStockYuzhny < 0 ? 'is-due-today' : '')."'><strong>" . $freeStockYuzhny . "</strong> шт. <span style='color: #828B95;'>(" . $yuzhnyPortValue . ")</span></td>";
                 }
                 if ($showRamenskiy) {
                     $freeStockRamenskiy = $item['FREE_STOCK_RAMENSKIY'] ?? 0;
-                    //$freeStockRamenskiy = $freeStockRamenskiy > 0 ? $freeStockRamenskiy : 0;
                     $ramenskiyValue = (float)($item['PROPERTY_145_VALUE'] ?? 0);
                     $html .= "<td class='col-property col-svob-ram ".($freeStockRamenskiy < 0 ? 'is-due-today' : '')."'><strong>" . $freeStockRamenskiy . "</strong> шт. <span style='color: #828B95;'>(" . $ramenskiyValue . ")</span></td>";
                 }
@@ -1873,12 +1891,10 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                     $html .= "<td class='col-property' data-stage-type='delivery'><strong>" . ($item['DELIVERY_QTY'] ?? '0') . "</strong> шт.</td>";
                     $html .= "<td class='col-property' data-stage-type='pickup'><strong>" . ($item['PICKUP_QTY'] ?? '0') . "</strong> шт.</td>";
                 }
-                // --- НАЧАЛО ИЗМЕНЕНИЙ ---
                 if ($showShipmentStockCols) {
                     $html .= "<td class='col-property col-yuzhny'><strong>" . ($item['READY_QTY_YUZHNY'] ?? '0') . "</strong> шт.</td>";
                     $html .= "<td class='col-property col-ramenskiy'><strong>" . ($item['READY_QTY_RAMENSKIY'] ?? '0') . "</strong> шт.</td>";
                 }
-                // --- КОНЕЦ ИЗМЕНЕНИЙ ---
             } else {
                 $title = htmlspecialcharsbx($item['ID']);
                 $html .= "<td class='col-name'><span class='item-name'>{$title}</span></td>";
@@ -1897,12 +1913,21 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 if (in_array($stageId, ['17', '13_26', '15', '25'])) {
                     $docHtml = '';
                     $docDateHtml = '';
-                    if (isset($item['closingDoc'])) {
-                        $docHtml = "<a href='#' data-slider-url='/crm/type/1056/details/{$item['closingDoc']['ID']}/' class='item-closing-doc'>" . htmlspecialcharsbx($item['closingDoc']['TITLE']) . "</a>";
-                        if (!empty($item['closingDoc']['DATE'])) {
-                            $docDateHtml = $item['closingDoc']['DATE']->format('d.m.Y');
+                    if (isset($item['closingDoc']) && is_array($item['closingDoc'])) {
+                        $docLinks = [];
+                        $docDates = [];
+                        foreach ($item['closingDoc'] as $doc) {
+                            $docLinks[] = "<a href='#' data-slider-url='/crm/type/1056/details/{$doc['ID']}/' class='item-closing-doc'>" . htmlspecialcharsbx($doc['TITLE']) . "</a>";
+                            if (!empty($doc['DATE'])) {
+                                $docDates[] = $doc['DATE']->format('d.m.Y');
+                            }
+                        }
+                        $docHtml = implode(', ', $docLinks);
+                        if (!empty($docDates)) {
+                            $docDateHtml = implode(', ', array_unique($docDates));
                         }
                     }
+
                     $html .= "<td class='col-closing-doc'>{$docHtml}</td>";
                     
                     $totalWeightHtml = '';
@@ -1928,6 +1953,13 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                     $filterWarehouseId = $item['UF_CRM_1753786869'] ?? '';
                     $filterWarehouseValue = isset($filterWarehousesMap[$filterWarehouseId]) ? htmlspecialcharsbx($filterWarehousesMap[$filterWarehouseId]) : '';
                     $html .= "<td class='col-shipping-warehouse'>{$filterWarehouseValue}</td>";
+                }
+                if ($stageId === '28') {
+                    $totalWeightHtml = '';
+                    if (isset($item['totalWeight']) && $item['totalWeight'] > 0) {
+                        $totalWeightHtml = '<strong>' . round($item['totalWeight'], 2) . '</strong> кг';
+                    }
+                    $html .= "<td class='col-total-weight'>{$totalWeightHtml}</td>";
                 }
                 if (in_array($stageId, ['17', '13_26', '15', '25'])) {
                     $commentsText = '';
@@ -2099,8 +2131,6 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                         ]
                     ]
                 );
-                // $fields = ['STAGE_ID' => '25'];
-                // $dealUpdater->Update($deal['ID'], );
             }
         }
 
@@ -2126,7 +2156,6 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         }
         if (!empty($dealsToMove['to_stage_28'])) {
             foreach ($dealsToMove['to_stage_28'] as $deal) {
-                //echo $deal['ID']."<br>";
                 $result = CRest::call(
                     'crm.deal.update',
                     [
@@ -2140,155 +2169,13 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         }
     }
 
-
-    // public function getDealsToMoveFromStage20()
-    // {
-    //     // 1. Check module dependencies
-    //     if (!\Bitrix\Main\Loader::includeModule('crm') || !\Bitrix\Main\Loader::includeModule('iblock') || !\Bitrix\Main\Loader::includeModule('catalog')) {
-    //         error_log("autoMoveDealsAgent: Required modules (crm, iblock, catalog) are not installed.");
-    //         return [];
-    //     }
-
-    //     // 2. Prepare warehouse information
-    //     $this->getFilterWarehouseFieldInfo();
-    //     $yuzhnyPortId = null;
-    //     $ramenskiyId = null;
-    //     if ($this->filterWarehouses) {
-    //         foreach ($this->filterWarehouses as $warehouse) {
-    //             if (mb_strpos($warehouse['VALUE'], 'Южнопортовый') !== false) {
-    //                 $yuzhnyPortId = $warehouse['ID'];
-    //             }
-    //             if (mb_strpos($warehouse['VALUE'], 'Раменский') !== false) {
-    //                 $ramenskiyId = $warehouse['ID'];
-    //             }
-    //         }
-    //     }
-
-    //     // 3. Get all deals from stage 'Assembly' (ID 20)
-    //     $dbDeals = \CCrmDeal::GetListEx(
-    //         [],
-    //         ['STAGE_ID' => '20', 'CHECK_PERMISSIONS' => 'N'],
-    //         false,
-    //         false,
-    //         ['ID', 'TITLE', 'UF_CRM_1753786869']
-    //     );
-
-    //     $deals = [];
-    //     while ($deal = $dbDeals->Fetch()) {
-    //         $deals[] = $deal;
-    //     }
-
-    //     if (empty($deals)) {
-    //         return [];
-    //     }
-
-    //     // 4. Collect all products from all deals to optimize queries
-    //     $dealProductsMap = [];
-    //     $allProductIds = [];
-
-    //     $dealIds = array_column($deals, 'ID');
-    //     $productRows = \Bitrix\Crm\ProductRowTable::getList([
-    //         'filter' => ['=OWNER_TYPE' => 'D', '@OWNER_ID' => $dealIds]
-    //     ])->fetchAll();
-
-    //     foreach ($productRows as $row) {
-    //         $dealProductsMap[$row['OWNER_ID']][] = $row;
-    //     }
-
-    //     // 5. Break down product sets into components
-    //     $flatProductsByDeal = [];
-    //     foreach ($dealIds as $dealId) {
-    //         $flatProductsByDeal[$dealId] = [];
-    //         if (!empty($dealProductsMap[$dealId])) {
-    //             $flatProductsByDeal[$dealId] = $this->getFlatProductsList($dealProductsMap[$dealId]);
-    //             foreach ($flatProductsByDeal[$dealId] as $product) {
-    //                 $allProductIds[] = $product['PRODUCT_ID'];
-    //             }
-    //         }
-    //     }
-        
-    //     $uniqueProductIds = array_unique($allProductIds);
-
-    //     // Get set info for all components found
-    //     $setInfoForAllProducts = $this->getProductsSetInfo($uniqueProductIds);
-        
-    //     // Collect all parent set IDs to fetch their properties and reservations as well
-    //     $allParentSetIds = [];
-    //     foreach ($setInfoForAllProducts as $info) {
-    //         if (!empty($info['SET_ID'])) {
-    //             $allParentSetIds[] = $info['SET_ID'];
-    //         }
-    //     }
-    //     $allParentSetIds = array_unique($allParentSetIds);
-
-    //     // All IDs we need to query for properties and stock
-    //     $idsForQueries = array_unique(array_merge($uniqueProductIds, $allParentSetIds));
-    //     if(empty($idsForQueries)) {
-    //          $idsForQueries = [-1]; // Prevent SQL error with empty "IN ()" clause
-    //     }
-        
-    //     // 6. Get stock and reservation info for all relevant products AND sets in single queries
-    //     $productProperties = $this->getProductsProperties($idsForQueries);
-    //     $readyForShipmentQuantities = $this->getProductReadyForShipmentQuantities($idsForQueries);
-
-    //     // 7. Main checking logic
-    //     $dealsToMove = [];
-    //     foreach ($deals as $deal) {
-    //         $dealId = $deal['ID'];
-    //         $warehouseId = $deal['UF_CRM_1753786869'];
-
-    //         // Skip deals with no warehouse or an unsupported warehouse
-    //         if (!$warehouseId || !in_array($warehouseId, [$yuzhnyPortId, $ramenskiyId])) {
-    //             continue;
-    //         }
-
-    //         $productsToCheck = $flatProductsByDeal[$dealId] ?? [];
-            
-    //         // Deals without products can be moved
-    //         if (empty($productsToCheck)) {
-    //             $dealsToMove[] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
-    //             continue;
-    //         }
-
-    //         $isStockSufficient = true;
-    //         foreach ($productsToCheck as $productInfo) {
-    //             $productId = $productInfo['PRODUCT_ID'];
-    //             $quantityNeeded = $productInfo['QUANTITY'];
-                
-    //             // Determine which product ID to use for stock and reservation checks.
-    //             // If it's a component, use its parent set ID. Otherwise, use its own ID.
-    //             $setInfo = $setInfoForAllProducts[$productId] ?? null;
-    //             $idToCheck = ($setInfo && !empty($setInfo['SET_ID'])) ? $setInfo['SET_ID'] : $productId;
-                
-    //             $stockPropertyKey = ($warehouseId == $yuzhnyPortId) ? 'PROPERTY_135_VALUE' : 'PROPERTY_145_VALUE';
-                
-    //             $totalStock = (float)($productProperties[$idToCheck][$stockPropertyKey] ?? 0);
-    //             $reservedStock = (float)($readyForShipmentQuantities[$idToCheck]['by_warehouse'][$warehouseId] ?? 0);
-    //             $freeStock = $totalStock - $reservedStock;
-                
-    //             if ($freeStock < $quantityNeeded) {
-    //                 $isStockSufficient = false;
-    //                 break; // Not enough stock for one of the products, stop checking this deal
-    //             }
-    //         }
-
-    //         if ($isStockSufficient) {
-    //             $dealsToMove[] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
-    //         }
-    //     }
-
-    //     return $dealsToMove;
-    // }
-
     public function getDealsForAutoMove()
     {
-        // 1. Check module dependencies
         if (!\Bitrix\Main\Loader::includeModule('crm') || !\Bitrix\Main\Loader::includeModule('iblock') || !\Bitrix\Main\Loader::includeModule('catalog')) {
             error_log("autoMoveDealsAgent: Required modules (crm, iblock, catalog) are not installed.");
             return [];
         }
 
-        // 2. Prepare warehouse information
         $this->getFilterWarehouseFieldInfo();
         $yuzhnyPortId = null;
         $ramenskiyId = null;
@@ -2303,7 +2190,6 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             }
         }
 
-        // 3. Get all deals from stage 'Assembly' (ID 20)
         $dbDeals = \CCrmDeal::GetListEx(
             [],
             ['STAGE_ID' => '20', 'CHECK_PERMISSIONS' => 'N'],
@@ -2321,7 +2207,6 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             return [];
         }
 
-        // 4. Collect all products from all deals to optimize queries
         $dealProductsMap = [];
         $allProductIds = [];
 
@@ -2334,7 +2219,6 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             $dealProductsMap[$row['OWNER_ID']][] = $row;
         }
 
-        // 5. Break down product sets into components
         $flatProductsByDeal = [];
         foreach ($dealIds as $dealId) {
             $flatProductsByDeal[$dealId] = [];
@@ -2348,29 +2232,15 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         
         $uniqueProductIds = array_unique($allProductIds);
 
-        // Get set info for all components found
-        $setInfoForAllProducts = $this->getProductsSetInfo($uniqueProductIds);
-        
-        // Collect all parent set IDs to fetch their properties and reservations as well
-        $allParentSetIds = [];
-        foreach ($setInfoForAllProducts as $info) {
-            if (!empty($info['SET_ID'])) {
-                $allParentSetIds[] = $info['SET_ID'];
-            }
-        }
-        $allParentSetIds = array_unique($allParentSetIds);
-
-        // All IDs we need to query for properties and stock
-        $idsForQueries = array_unique(array_merge($uniqueProductIds, $allParentSetIds));
+        $idsForQueries = $uniqueProductIds;
         if(empty($idsForQueries)) {
-             $idsForQueries = [-1]; // Prevent SQL error with empty "IN ()" clause
+             $idsForQueries = [-1];
         }
         
-        // 6. Get stock and reservation info for all relevant products AND sets in single queries
         $productProperties = $this->getProductsProperties($idsForQueries);
         $readyForShipmentQuantities = $this->getProductReadyForShipmentQuantities($idsForQueries);
+        $assemblyQuantities = $this->getProductQuantitiesOnStages($idsForQueries, ['31', '28', '21', '27']);
 
-        // 7. Main checking logic
         $dealsToMove = [
             'to_stage_25' => [],
             'to_stage_28' => []
@@ -2380,14 +2250,12 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             $dealId = $deal['ID'];
             $assignedWarehouseId = $deal['UF_CRM_1753786869'];
 
-            // Skip deals with no warehouse or an unsupported warehouse
             if (!$assignedWarehouseId || !in_array($assignedWarehouseId, [$yuzhnyPortId, $ramenskiyId])) {
                 continue;
             }
 
             $productsToCheck = $flatProductsByDeal[$dealId] ?? [];
             
-            // Deals without products can be moved to stage 25 directly
             if (empty($productsToCheck)) {
                 $dealsToMove['to_stage_25'][] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
                 continue;
@@ -2399,16 +2267,15 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 $productId = $productInfo['PRODUCT_ID'];
                 $quantityNeeded = $productInfo['QUANTITY'];
                 
-                $setInfo = $setInfoForAllProducts[$productId] ?? null;
-                $idToCheck = ($setInfo && !empty($setInfo['SET_ID'])) ? $setInfo['SET_ID'] : $productId;
-                
                 $stockPropertyKey = ($assignedWarehouseId == $yuzhnyPortId) ? 'PROPERTY_135_VALUE' : 'PROPERTY_145_VALUE';
                 
-                $totalStock = (float)($productProperties[$idToCheck][$stockPropertyKey] ?? 0);
-                $reservedStock = (float)($readyForShipmentQuantities[$idToCheck]['by_warehouse'][$assignedWarehouseId] ?? 0);
+                $totalStock = (float)($productProperties[$productId][$stockPropertyKey] ?? 0);
+                $reservedStock = (float)($readyForShipmentQuantities[$productId]['by_warehouse'][$assignedWarehouseId] ?? 0);
                 $freeStock = $totalStock - $reservedStock;
                 
-                if ($freeStock < $quantityNeeded) {
+                $assemblyQty = $assemblyQuantities[$productId] ?? 0;
+                
+                if (($freeStock - $assemblyQty) < $quantityNeeded) {
                     $isStockSufficientOnAssigned = false;
                     break;
                 }
@@ -2416,7 +2283,7 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
 
             if ($isStockSufficientOnAssigned) {
                 $dealsToMove['to_stage_25'][] = ['ID' => $deal['ID'], 'TITLE' => $deal['TITLE']];
-                continue; // Move to next deal
+                continue;
             }
 
             // --- Check 2: Other Warehouse ---
@@ -2430,16 +2297,15 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 $productId = $productInfo['PRODUCT_ID'];
                 $quantityNeeded = $productInfo['QUANTITY'];
 
-                $setInfo = $setInfoForAllProducts[$productId] ?? null;
-                $idToCheck = ($setInfo && !empty($setInfo['SET_ID'])) ? $setInfo['SET_ID'] : $productId;
-
                 $stockPropertyKey = ($otherWarehouseId == $yuzhnyPortId) ? 'PROPERTY_135_VALUE' : 'PROPERTY_145_VALUE';
 
-                $totalStock = (float)($productProperties[$idToCheck][$stockPropertyKey] ?? 0);
-                $reservedStock = (float)($readyForShipmentQuantities[$idToCheck]['by_warehouse'][$otherWarehouseId] ?? 0);
+                $totalStock = (float)($productProperties[$productId][$stockPropertyKey] ?? 0);
+                $reservedStock = (float)($readyForShipmentQuantities[$productId]['by_warehouse'][$otherWarehouseId] ?? 0);
                 $freeStock = $totalStock - $reservedStock;
 
-                if ($freeStock < $quantityNeeded) {
+                $assemblyQty = $assemblyQuantities[$productId] ?? 0;
+
+                if (($freeStock - $assemblyQty) < $quantityNeeded) {
                     $isStockSufficientOnOther = false;
                     break;
                 }
@@ -2469,7 +2335,6 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             $productId = $row['PRODUCT_ID'];
             $quantity = (float)$row['QUANTITY'];
 
-            // Исключаем услуги из расчетов
             if (in_array($productId, $this->excludedProductIds)) {
                 continue;
             }
@@ -2481,7 +2346,6 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                     foreach ($set['ITEMS'] as $item) {
                         $componentId = $item['ITEM_ID'];
                         
-                        // Исключаем услуги из комплектов
                         if (in_array($componentId, $this->excludedProductIds)) {
                             continue;
                         }
