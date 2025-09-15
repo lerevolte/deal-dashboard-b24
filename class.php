@@ -1922,9 +1922,9 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                                 $docDates[] = $doc['DATE']->format('d.m.Y');
                             }
                         }
-                        $docHtml = implode(', ', $docLinks);
+                        $docHtml = implode('<br>', $docLinks);
                         if (!empty($docDates)) {
-                            $docDateHtml = implode(', ', array_unique($docDates));
+                            $docDateHtml = implode('<br>', array_unique($docDates));
                         }
                     }
 
