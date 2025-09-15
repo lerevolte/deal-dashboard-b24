@@ -1748,7 +1748,7 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
             $html .= '<th class="col-name" data-sort-key="PRODUCT_NAME">Название</th>';
             $html .= '<th class="col-quantity" data-sort-key="TOTAL_QUANTITY">Требуется</th>';
             if (in_array($stageId, ['20', '31', '21_27', '28'])) {
-                 $html .= '<th class="col-property">Сборка</th>';
+                 $html .= '<th class="col-property">На сборке</th>';
             }
             if ($showYuzhnyPort) {
                 $html .= '<th class="col-property col-svob-yup">Своб. ЮП</th>';
