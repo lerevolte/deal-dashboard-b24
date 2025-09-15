@@ -337,6 +337,17 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         $productRows = array_filter($productRows, function($row) {
             return !in_array($row['PRODUCT_ID'], $this->excludedProductIds);
         });
+
+        $productIds = array_unique(array_column($productRows, 'PRODUCT_ID'));
+        if (!empty($productIds)) {
+            $productRealNames = $this->getProductsNames($productIds);
+            foreach ($productRows as &$row) {
+                if (isset($productRealNames[$row['PRODUCT_ID']])) {
+                    $row['PRODUCT_NAME'] = $productRealNames[$row['PRODUCT_ID']];
+                }
+            }
+            unset($row);
+        }
         
         if (empty($productRows)) {
             return [];
@@ -404,6 +415,28 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         } catch (\Throwable $e) {
             return [];
         }
+    }
+
+    private function getProductsNames(array $productIds): array
+    {
+        if (empty($productIds) || !\Bitrix\Main\Loader::includeModule('iblock')) {
+            return [];
+        }
+
+        $productNames = [];
+        $dbRes = \CIBlockElement::GetList(
+            [],
+            ['ID' => array_unique($productIds)],
+            false,
+            false,
+            ['ID', 'NAME']
+        );
+
+        while ($element = $dbRes->Fetch()) {
+            $productNames[$element['ID']] = $element['NAME'];
+        }
+
+        return $productNames;
     }
 
     private function getProductsProperties(array $elementIds): array
@@ -1249,6 +1282,17 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
                 return !in_array($row['PRODUCT_ID'], $this->excludedProductIds);
             });
 
+            $productIds = array_unique(array_column($productRows, 'PRODUCT_ID'));
+            if (!empty($productIds)) {
+                $productRealNames = $this->getProductsNames($productIds);
+                foreach ($productRows as &$row) {
+                    if (isset($productRealNames[$row['PRODUCT_ID']])) {
+                        $row['PRODUCT_NAME'] = $productRealNames[$row['PRODUCT_ID']];
+                    }
+                }
+                unset($row);
+            }
+
             $productIdsInStage = array_unique(array_column($productRows, 'PRODUCT_ID'));
             $setInfoForStageProducts = $this->getProductsSetInfo($productIdsInStage);
             $productsAggregated = $this->aggregateProducts($productRows, $setInfoForStageProducts);
@@ -1420,6 +1464,17 @@ class CompanyDealDashboardComponent extends CBitrixComponent implements Controll
         $productRowsUnfiltered = array_filter($productRowsUnfiltered, function($row) {
             return !in_array($row['PRODUCT_ID'], $this->excludedProductIds);
         });
+
+        $productIds = array_unique(array_column($productRowsUnfiltered, 'PRODUCT_ID'));
+        if (!empty($productIds)) {
+            $productRealNames = $this->getProductsNames($productIds);
+            foreach ($productRowsUnfiltered as &$row) {
+                if (isset($productRealNames[$row['PRODUCT_ID']])) {
+                    $row['PRODUCT_NAME'] = $productRealNames[$row['PRODUCT_ID']];
+                }
+            }
+            unset($row);
+        }
         
         if (empty($productRowsUnfiltered)) {
             return ['html' => $this->renderItems([], 'deal_product', $stageId)];
